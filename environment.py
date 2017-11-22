@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 from matplotlib import cm
 
-#rd.seed(9001)
+rd.seed(9001)
 
 
 class State:
@@ -65,9 +65,11 @@ def eps_greedy(state,Q,epsilon):
     """state : Dealers cards, sum_player 
     Q: triple array D,C,V
     epsilon controls the exploration"""
+    dealer_id = state.dealer_card - 1
+    player_id = state.sum_player - 1
     if rd.random()<epsilon:
         return rd.randint(0,1)
-    return np.argmax(Q[state.dealer_card-1,state.sum_player-1,:])
+    return np.argmax(Q[dealer_id,player_id,:])
 
 
 def monte_carlo_control(number_episode = 1000000,discount = 1,N0 = 100):
@@ -81,55 +83,66 @@ def monte_carlo_control(number_episode = 1000000,discount = 1,N0 = 100):
         list_state_action = []
         list_reward = []
         while not is_terminal(state):
-            epsilon = N0/(N0+np.sum(counter[state.dealer_card-1,state.sum_player-1]))
+            epsilon = N0/(N0+np.sum(counter[
+                    state.dealer_card-1,state.sum_player-1]))
             action = eps_greedy(state,Q,epsilon)
-            list_state_action.append((state.dealer_card,state.sum_player,action))
+            list_state_action.append(
+                    (state.dealer_card,state.sum_player,action))
             state,reward = step(state,action)
             list_reward.append(reward)
         assert len(list_reward) == len(list_state_action)
         sum_reward = 0
-        for (stateD,stateP,action),reward in zip(reversed(list_state_action),reversed(list_reward)):
+        for (stateD,stateP,action),reward in zip(reversed(
+                list_state_action),reversed(list_reward)):
             counter[stateD-1,stateP-1,action] += 1
             sum_reward = discount*sum_reward + reward
-            Q[stateD-1,stateP-1,action] += (sum_reward-Q[stateD-1,stateP-1,action])/(
+            Q[stateD-1,stateP-1,action] += (
+                    sum_reward-Q[stateD-1,stateP-1,action])/(
                     counter[stateD-1,stateP-1,action])
     np.set_printoptions(precision=5)
     np.set_printoptions(suppress=True)
     return np.max(Q,axis=2), np.argmax(Q,axis=2)
 
-def sarsa(lambd, num_episodes = 10000, discount = 1, N0=100 ):
+def sarsa(lambd, num_episodes = 1000000, discount = 1, N0=100 ):
     """initialize Q(state,action) to 0 for all state and action"""
     Q = np.zeros((10,21,2),dtype=float)
     counter = np.ones((10,21,2),dtype=int)
     for _ in range(num_episodes):
         """ initialise eligibilty traces"""
-        elligibility = np.ones((10,21,2),dtype=int)
+        elligibility = np.zeros((10,21,2),dtype=float)
         state = State()
-        state.dealer_card, state.sum_player = rd.randint(1,10),rd.randint(1,10)
-        list_state_action = []
+        state.dealer_card = rd.randint(1,10)
+        state.sum_player = rd.randint(1,10)
+        epsilon = N0/(N0+np.sum(counter[
+                state.dealer_card-1,state.sum_player-1]))
+        action = eps_greedy(state,Q,epsilon)
+        new_action = action
         while not is_terminal(state):
-            epsilon = N0/(N0+np.sum(counter[state.dealer_card-1,state.sum_player-1]))
-            action = eps_greedy(state,Q,epsilon)
-            list_state_action.append((state.dealer_card,state.sum_player,action))
-            elligibility[state.dealer_card-1,state.sum_player-1,action] += 1
-            counter[state.dealer_card-1,state.sum_player-1,action] += 1
+            counter[state.dealer_card-1,
+                    state.sum_player-1,action] += 1
             new_state,reward = step(state,action)
-            new_action = eps_greedy(state,Q,epsilon)
-            if is_terminal(new_state):
-                try:
-                    delta = reward - Q[state.dealer_card-1,state.sum_player-1,action]
-                except Exception:
-                    print("errrrrrrrrrrrrrrreuuuuuuuuuuuuuuuuuuuuuuu")
-                    return(state.dealer_card-1,state.sum_player-1,action)
+            q = Q[state.dealer_card-1,
+                  state.sum_player-1,action]
+            if not is_terminal(new_state):
+                epsilon = N0/(N0+np.sum(counter[
+                        new_state.dealer_card-1,
+                        new_state.sum_player-1]))
+                new_action = eps_greedy(new_state,Q,epsilon)
+                new_q = Q[new_state.dealer_card-1,
+                          new_state.sum_player-1,new_action]
+                delta = reward + discount*new_q - q
             else:
-                delta = reward+discount*Q[new_state.dealer_card-1,new_state.sum_player-1,new_action]-Q[
-                        state.dealer_card-1,state.sum_player-1,action]
-            for (stateD,stateP,action) in list_state_action:
-                Q[stateD-1,stateP-1,action] += discount*delta*elligibility[stateD-1,stateP-1,action]/counter[
-                        stateD-1,stateP-1,action]
-                elligibility[stateD-1,stateP-1,action]*=discount*lambd
+                delta = reward - q
+            elligibility[state.dealer_card-1,
+                         state.sum_player-1,action] += 1
+            alpha = 1/counter[state.dealer_card-1,
+                              state.sum_player-1,action]
+            update = alpha*delta*elligibility
+            Q += update
+            elligibility *= lambd
             state = new_state
             action = new_action
+            
             
     np.set_printoptions(precision=5)
     np.set_printoptions(suppress=True)
@@ -166,18 +179,19 @@ def MSE(X,Y):
 
 
 def compare():
-    best_value = convert_dict_value_to_array_value(convert_Q_to_value_fonction(monte_carlo_control(1000000)))
+    best_value = monte_carlo_control(1000000)[0]
     diff = list()
     print("best_value computed")
     for lambd in np.arange(0,1.1,0.1):
         print("lambda = ",lambd)
-        res = convert_dict_value_to_array_value(convert_Q_to_value_fonction(sarsa(lambd,1000)))
+        res = sarsa(lambd,50000)[0]
         diff.append(MSE(best_value,res))
     
     x = np.arange(0,1.1,0.1)
     plt.plot(x,diff)
     plt.show()
 
+compare()
 
 def prettyPrint(data, tile, zlabel='reward'):
     fig = plt.figure()
@@ -240,7 +254,7 @@ def simulation_stick(state):
     elif D == sum_player:
         return 0
 
-        
+
             
         
         
