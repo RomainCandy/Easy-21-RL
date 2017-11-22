@@ -13,6 +13,14 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 from matplotlib import cm
 
+#rd.seed(9001)
+
+
+class State:
+    def __init__(self):
+        self.dealer_card = rd.randint(1,10)
+        self.sum_player = rd.randint(1,10)
+
 def dealer_strategy(sum_cards):
     """hit while his sum is inferior to 17"""
     while sum_cards<17:
@@ -29,106 +37,103 @@ def dealer_strategy(sum_cards):
 def step(state,action):
     """state-> tuple (D,Sum) where D is the dealer first card and Sum is the player Sum or Terminal if terminal
     action -> stick:0 or hit:1"""
-    if action == 'stick':
-        dealer_card,sum_player = state 
-        dealer_count = dealer_strategy(dealer_card)
-        if dealer_count == sum_player:
+    res = State()
+    res.dealer_card = state.dealer_card
+    if action == 0:
+        dealer_count = dealer_strategy(state.dealer_card)
+        if dealer_count == state.sum_player:
             reward = 0
-        elif dealer_count > sum_player:
+        elif dealer_count > state.sum_player:
             reward = -1
-        elif dealer_count < sum_player:
+        elif dealer_count < state.sum_player:
             reward = 1
         return 'Terminal',reward
-    elif action == 'hit':
+    elif action == 1:
         count = 2*(rd.random()<2/3)-1
         value_card = rd.randint(1,10)
-        dealer_card,sum_player = state
-        new_value = sum_player+count*value_card 
-        if new_value<=0 or new_value >=22:
+        res.sum_player = state.sum_player +count*value_card 
+        if res.sum_player<=0 or res.sum_player >=22:
             return 'Terminal',-1
         else:
-            return (dealer_card,new_value),0
+            return res,0
         
 def is_terminal(state):
-    return 'T' in state
+    return state == 'Terminal'
         
 
 def eps_greedy(state,Q,epsilon):
-    """state : Dealers cards, sum_player or Terminal 
-    Q: dict(state->list(V_stick,V_hit))
+    """state : Dealers cards, sum_player 
+    Q: triple array D,C,V
     epsilon controls the exploration"""
     if rd.random()<epsilon:
-        return rd.choice(('hit','stick'))
-    return ['stick','hit'][np.argmax(Q[state])]
+        return rd.randint(0,1)
+    return np.argmax(Q[state.dealer_card-1,state.sum_player-1,:])
 
 
-def monte_carlo_control(number_step = 1000000,discount = 1,N0 = 100):
+def monte_carlo_control(number_episode = 1000000,discount = 1,N0 = 100):
     """initialize Q(state,action) to 0 for all state and action"""
-    Q = {(i,j):[0,0] for i in range(1,11) for j in range(1,22)}
-    Q['Terminal'] = [0,0]
-    counter = {(i,j):[1,1] for i in range(1,11) for j in range(1,22)}
-    counter['Terminal'] = [0,0]
-    for _ in range(number_step):
-        state = rd.randint(1,10),rd.randint(1,10)
-        reward_final = 0
-        time_step = 0
-        epsilon = N0/(N0+sum(counter[state]))
-        action = eps_greedy(state,Q,epsilon)
-        list_state = [state]
-        list_action = [action]
-        while True:
-            state,reward = step(state,action)
-            reward_final += reward*discount**time_step
-            if is_terminal(state):
-                break
-            epsilon = N0/(N0+sum(counter[state]))
+    Q = np.zeros((10,21,2),dtype=float)
+    counter = np.ones((10,21,2),dtype=int)
+    for _ in range(number_episode):
+        state = State()
+        state.dealercard = rd.randint(1,10)
+        state.playersum = rd.randint(1,10)
+        list_state_action = []
+        list_reward = []
+        while not is_terminal(state):
+            epsilon = N0/(N0+np.sum(counter[state.dealer_card-1,state.sum_player-1]))
             action = eps_greedy(state,Q,epsilon)
-            list_state.append(state)
-            list_action.append(action)
-            time_step += 1
-        for state,action in reversed(list(zip(list_state,list_action))):
-            if action == 'hit':
-                index = 1
-            elif action == 'stick':
-                index = 0
-            counter[state][index] += 1
-            Q[state][index] += (reward_final-Q[state][index])/(counter[state][index])
-
-    return Q
-
+            list_state_action.append((state.dealer_card,state.sum_player,action))
+            state,reward = step(state,action)
+            list_reward.append(reward)
+        assert len(list_reward) == len(list_state_action)
+        sum_reward = 0
+        for (stateD,stateP,action),reward in zip(reversed(list_state_action),reversed(list_reward)):
+            counter[stateD-1,stateP-1,action] += 1
+            sum_reward = discount*sum_reward + reward
+            Q[stateD-1,stateP-1,action] += (sum_reward-Q[stateD-1,stateP-1,action])/(
+                    counter[stateD-1,stateP-1,action])
+    np.set_printoptions(precision=5)
+    np.set_printoptions(suppress=True)
+    return np.max(Q,axis=2), np.argmax(Q,axis=2)
 
 def sarsa(lambd, num_episodes = 10000, discount = 1, N0=100 ):
     """initialize Q(state,action) to 0 for all state and action"""
-    Q = {(i,j):[0,0] for i in range(1,11) for j in range(1,22)}
-    Q['Terminal'] = [0,0]
-    counter = {(i,j):[1,1] for i in range(1,11) for j in range(1,22)}
-    counter['Terminal'] = [1,1]
+    Q = np.zeros((10,21,2),dtype=float)
+    counter = np.ones((10,21,2),dtype=int)
     for _ in range(num_episodes):
         """ initialise eligibilty traces"""
-        E = {(i,j):[0,0] for i in range(1,11) for j in range(1,22)}
-        E['Terminal'] = [0,0]
-        state = rd.randint(1,10),rd.randint(1,10)
-        epsilon = N0/(N0+sum(counter[state]))
-        action = eps_greedy(state,Q,epsilon)
+        elligibility = np.ones((10,21,2),dtype=int)
+        state = State()
+        state.dealer_card, state.sum_player = rd.randint(1,10),rd.randint(1,10)
+        list_state_action = []
         while not is_terminal(state):
+            epsilon = N0/(N0+np.sum(counter[state.dealer_card-1,state.sum_player-1]))
+            action = eps_greedy(state,Q,epsilon)
+            list_state_action.append((state.dealer_card,state.sum_player,action))
+            elligibility[state.dealer_card-1,state.sum_player-1,action] += 1
+            counter[state.dealer_card-1,state.sum_player-1,action] += 1
             new_state,reward = step(state,action)
-            epsilon = N0/(N0+sum(counter[new_state]))
             new_action = eps_greedy(state,Q,epsilon)
-            delta = reward+discount*Q[new_state][new_action == 'hit']-Q[state][action=='hit']
-            if action == 'hit':
-                index = 1
-            elif action == 'stick':
-                index = 0
-            E[state][index] += 1
-            counter[state][index]+=1
-            for state in Q:
-                Q[state][0] += discount*delta*E[state][0]/counter[state][0]
-                Q[state][1] += discount*delta*E[state][1]/counter[state][1]
-                E[state][0]*=discount*lambd
-                E[state][1]*=discount*lambd
+            if is_terminal(new_state):
+                try:
+                    delta = reward - Q[state.dealer_card-1,state.sum_player-1,action]
+                except Exception:
+                    print("errrrrrrrrrrrrrrreuuuuuuuuuuuuuuuuuuuuuuu")
+                    return(state.dealer_card-1,state.sum_player-1,action)
+            else:
+                delta = reward+discount*Q[new_state.dealer_card-1,new_state.sum_player-1,new_action]-Q[
+                        state.dealer_card-1,state.sum_player-1,action]
+            for (stateD,stateP,action) in list_state_action:
+                Q[stateD-1,stateP-1,action] += discount*delta*elligibility[stateD-1,stateP-1,action]/counter[
+                        stateD-1,stateP-1,action]
+                elligibility[stateD-1,stateP-1,action]*=discount*lambd
             state = new_state
             action = new_action
-    return Q
+            
+    np.set_printoptions(precision=5)
+    np.set_printoptions(suppress=True)
+    return np.max(Q,axis=2), np.argmax(Q,axis=2)
 
 
 def convert_Q_to_policy(Q):
@@ -234,7 +239,6 @@ def simulation_stick(state):
         return -1
     elif D == sum_player:
         return 0
-
 
         
             
